@@ -6,6 +6,7 @@
     <title>MR Model Viewer</title>
     <script src="https://cdn.jsdelivr.net/npm/three@0.139.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.139.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.139.0/examples/js/vr/WebXRPolyfill.js"></script> <!-- Added polyfill for better WebXR support -->
     <style>
         body { margin: 0; }
         #vr-button {
@@ -72,7 +73,7 @@
                 },
                 function (error) {
                     console.error('Error loading model:', error); // Keep error log
-                    console.error('Failed to load model from:', modelPath); //show the path
+                    console.error('Failed to load model from:', modelPath); // Show the path
                 }
             );
 
