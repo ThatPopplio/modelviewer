@@ -1,124 +1,135 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MR Model Viewer</title>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.139.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.139.0/examples/js/loaders/GLTFLoader.js"></script>
-  <style>
-    body { margin: 0; }
-    #vr-button {
-      position: absolute; bottom: 20px; left: 50%;
-      transform: translateX(-50%);
-      padding: 10px 20px;
-      background: #4c6baf; color: white;
-      border: none; border-radius: 5px;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MR Model Viewer</title>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.139.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.139.0/examples/js/loaders/GLTFLoader.js"></script>
+    <style>
+        body { margin: 0; }
+        #vr-button {
+            position: absolute; bottom: 20px; left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            background: #4c6baf; color: white;
+            border: none; border-radius: 5px;
+        }
+        canvas {
+            display: block; /* Make sure the canvas doesn't have extra space */
+            width: 100vw;  /* Ensure full width */
+            height: 100vh; /* Ensure full height */
+        }
+    </style>
 </head>
 <body>
-  <button id="vr-button">Enter MR</button>
-  <script>
-    let scene, camera, renderer;
-    let xrSession = null;
-    let controller;
-    const moveSpeed = 0.1;
-    let model;
+    <button id="vr-button">Enter MR</button>
+    <script>
+        let scene, camera, renderer;
+        let xrSession = null;
+        let controller;
+        const moveSpeed = 0.1;
+        let model;
 
-    init();
+        init();
 
-    function init() {
-      scene = new THREE.Scene();
-      scene.background = null;
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = null; // Set background to null for transparency if needed
 
-      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.z = 5;
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 5); // Changed initial camera position
+            camera.lookAt(scene.position); // Make camera look at the scene center
 
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.xr.enabled = true;
-      document.body.appendChild(renderer.domElement);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
 
-      const light = new THREE.AmbientLight(0xffffff, 1);
-      scene.add(light);
+            const light = new THREE.AmbientLight(0xffffff, 1);
+            scene.add(light);
 
-      controller = renderer.xr.getController(0);
-      scene.add(controller);
+            controller = renderer.xr.getController(0);
+            scene.add(controller);
 
-      // Load 3D model
-      const loader = new THREE.GLTFLoader();
-      loader.load(
-        'https://thatpopplio.github.io/modelviewer/scene.gltf', // Replace with your model path
-        function (gltf) {
-          model = gltf.scene;
-          model.position.set(0, 2, -3); // Position the model
-          model.scale.set(0.5, 0.5, 0.5); // Scale the model
-          scene.add(model);
-        },
-        undefined,
-        function (error) {
-          console.error('Error loading model:', error);
+            // Load 3D model
+            const loader = new THREE.GLTFLoader();
+            const modelPath = 'https://thatpopplio.github.io/modelviewer/scene.gltf'; // Store path in variable
+            loader.load(
+                modelPath,
+                function (gltf) {
+                    model = gltf.scene;
+                    model.position.set(0, 0, -3); // Repositioned model
+                    model.scale.set(0.5, 0.5, 0.5);
+                    scene.add(model);
+                    console.log("Model loaded successfully:", model); // Add success log
+                },
+                function (xhr) {
+                    if (xhr.lengthComputable) {
+                        const percentComplete = xhr.loaded / xhr.total * 100;
+                        console.log('Model loading progress:', percentComplete.toFixed(2) + '%');
+                    }
+                },
+                function (error) {
+                    console.error('Error loading model:', error); // Keep error log
+                    console.error('Failed to load model from:', modelPath); //show the path
+                }
+            );
+
+            renderer.setAnimationLoop(render);
         }
-      );
 
-      renderer.setAnimationLoop(render);
-    }
+        function handleController(session) {
+            session.inputSources.forEach(inputSource => {
+                if (inputSource.gamepad && inputSource.handedness === 'left') {
+                    const gamepad = inputSource.gamepad;
+                    const axes = gamepad.axes;
 
-    function handleController(session) {
-      session.inputSources.forEach(inputSource => {
-        if (inputSource.gamepad && inputSource.handedness === 'left') {
-          const gamepad = inputSource.gamepad;
-          const axes = gamepad.axes;
+                    if (axes.length >= 2) {
+                        const forward = new THREE.Vector3(0, 0, -1);
+                        forward.applyQuaternion(camera.quaternion);
+                        forward.y = 0;
+                        forward.normalize();
 
-          if (axes.length >= 2) {
-            // Get camera's forward direction
-            const forward = new THREE.Vector3(0, 0, -1);
-            forward.applyQuaternion(camera.quaternion);
-            forward.y = 0; // Keep movement horizontal
-            forward.normalize();
+                        const right = new THREE.Vector3(1, 0, 0);
+                        right.applyQuaternion(camera.quaternion);
+                        right.y = 0;
+                        right.normalize();
 
-            // Get camera's right direction
-            const right = new THREE.Vector3(1, 0, 0);
-            right.applyQuaternion(camera.quaternion);
-            right.y = 0;
-            right.normalize();
-
-            // Apply movement
-            camera.position.add(forward.multiplyScalar(-axes[1] * moveSpeed)); // Forward/Backward
-            camera.position.add(right.multiplyScalar(axes[0] * moveSpeed)); // Left/Right
-          }
+                        camera.position.add(forward.multiplyScalar(-axes[1] * moveSpeed));
+                        camera.position.add(right.multiplyScalar(axes[0] * moveSpeed));
+                    }
+                }
+            });
         }
-      });
-    }
 
-    function render() {
-      if (xrSession) {
-        handleController(xrSession);
-      }
-      renderer.render(scene, camera);
-    }
-
-    document.getElementById('vr-button').addEventListener('click', async () => {
-      if (navigator.xr) {
-        try {
-          xrSession = await navigator.xr.requestSession('immersive-ar', {
-            optionalFeatures: ['local-floor', 'bounded-floor']
-          });
-          renderer.xr.setSession(xrSession);
-        } catch (e) {
-          alert("MR failed to start: " + e);
+        function render() {
+            if (xrSession) {
+                handleController(xrSession);
+            }
+            renderer.render(scene, camera);
         }
-      } else {
-        alert("WebXR not supported");
-      }
-    });
 
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-  </script>
+        document.getElementById('vr-button').addEventListener('click', async () => {
+            if (navigator.xr) {
+                try {
+                    xrSession = await navigator.xr.requestSession('immersive-ar', {
+                        optionalFeatures: ['local-floor', 'bounded-floor']
+                    });
+                    renderer.xr.setSession(xrSession);
+                } catch (e) {
+                    alert("MR failed to start: " + e);
+                }
+            } else {
+                alert("WebXR not supported");
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
 </body>
 </html>
