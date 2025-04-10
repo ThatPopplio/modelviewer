@@ -149,10 +149,12 @@
             if ('xr' in navigator) {
                 try {
                     // Request an XR session.  'immersive-vr' is for headsets.
-                    xrSession = await navigator.xr.requestSession('immersive-vr', {
-                        requiredFeatures: ['tracked-controllers', 'hand-tracking', 'dom-overlay'], // Add 'tracked-controllers'
-                        optionalFeatures: ['local-floor']
-                    });
+xrSession = await navigator.xr.requestSession('immersive-vr', {
+  requiredFeatures: ['local'],
+  optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'dom-overlay'],
+  domOverlay: { root: document.body } // Needed if you want dom-overlay
+});
+
 
                     xrSession.addEventListener('end', onSessionEnd);
 
