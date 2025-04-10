@@ -157,7 +157,12 @@
                     xrSession.addEventListener('end', onSessionEnd);
 
                     // Set the DOM overlay
-                    xrInput = new XRDOMInputProcessor(xrSession, document);
+                    try {
+                         xrInput = new XRDOMInputProcessor(xrSession, document);
+                    }
+                    catch(e){
+                        console.error("Error setting up XRDOMInputProcessor",e);
+                    }
 
 
                     // Create a reference space.  'local' is good for simple scenes.
@@ -176,22 +181,27 @@
                     }
 
                     //Create controllers
-                    leftController = renderer.xr.getControllerGrip(0);
-                    rightController = renderer.xr.getControllerGrip(1);
-                    scene.add(leftController);
-                    scene.add(rightController);
+                    try{
+                        leftController = renderer.xr.getControllerGrip(0);
+                        rightController = renderer.xr.getControllerGrip(1);
+                        scene.add(leftController);
+                        scene.add(rightController);
 
-                    const geometry = new THREE.BufferGeometry().setFromPoints([
-                        [0, 0, 0],
-                        [0, 0, -5],
-                    ]);
-                    const material = new THREE.LineBasicMaterial({
-                        color: 0x00ffff,
-                    });
-                    const leftRay = new THREE.Line(geometry, material);
-                    const rightRay = new THREE.Line(geometry, material);
-                    leftController.add(leftRay);
-                    rightController.add(rightRay);
+                        const geometry = new THREE.BufferGeometry().setFromPoints([
+                            [0, 0, 0],
+                            [0, 0, -5],
+                        ]);
+                        const material = new THREE.LineBasicMaterial({
+                            color: 0x00ffff,
+                        });
+                        const leftRay = new THREE.Line(geometry, material);
+                        const rightRay = new THREE.Line(geometry, material);
+                        leftController.add(leftRay);
+                        rightController.add(rightRay);
+                    }
+                    catch(e){
+                       console.error("Error setting up Controllers",e);
+                    }
 
 
                 } catch (error) {
@@ -214,7 +224,14 @@
                 renderer.render(scene, camera);
             }
             else if (xrSession) {
-                xrSession.requestAnimationFrame(animate);
+                try{
+                    xrSession.requestAnimationFrame(animate);
+                }
+                catch(e){
+                    console.error("Error in xrSession.requestAnimationFrame",e);
+                    return; // Exit the animation loop if there's an error with the session.
+                }
+
 
                 if (xrRefSpace) {
                     const pose = xrSession.getViewerPose(xrRefSpace);
@@ -236,53 +253,58 @@
         function handleControllerInput() {
             if (!rightController || !leftController) return;
 
-            const rightPose = rightController.getWorldPosition(new THREE.Vector3());
-            const leftPose = leftController.getWorldPosition(new THREE.Vector3());
+            try{
+                const rightPose = rightController.getWorldPosition(new THREE.Vector3());
+                const leftPose = leftController.getWorldPosition(new THREE.Vector3());
 
-             // Convert controller position to screen coordinates.
-            const screenPosition = {
-                x: (rightPose.x + 1) * (window.innerWidth / 2),
-                y: (-rightPose.y + 1) * (window.innerHeight / 2),
-            };
+                 // Convert controller position to screen coordinates.
+                const screenPosition = {
+                    x: (rightPose.x + 1) * (window.innerWidth / 2),
+                    y: (-rightPose.y + 1) * (window.innerHeight / 2),
+                };
 
-            raycaster.setFromCamera(screenPosition, camera);
-            const intersects = raycaster.intersectObjects(scene.children);
+                raycaster.setFromCamera(screenPosition, camera);
+                const intersects = raycaster.intersectObjects(scene.children);
 
-            if (intersects.length > 0) {
-                intersectedObject = intersects[0].object;
-                if(!isDragging){
-                     intersectedObject.material.color.set(0xffffff);
+                if (intersects.length > 0) {
+                    intersectedObject = intersects[0].object;
+                    if(!isDragging){
+                         intersectedObject.material.color.set(0xffffff);
+                    }
+
+                } else if (intersectedObject) {
+                    intersectedObject.material.color.set(0x00ff00);
+                    intersectedObject = null;
                 }
 
-            } else if (intersectedObject) {
-                intersectedObject.material.color.set(0x00ff00);
-                intersectedObject = null;
-            }
+                if (xrSession && xrInput) {
+                    if (xrInput.isPressed('right-trigger')) {
+                        if (intersectedObject) {
+                            isDragging = true;
+                            previousMousePosition = screenPosition;
+                        }
+                    }
+                    else if (xrInput.isPressed('right-grip')) {
+                        showMenu();
+                    }
 
-            if (xrSession && xrInput) {
-                if (xrInput.isPressed('right-trigger')) {
-                    if (intersectedObject) {
-                        isDragging = true;
+                    if (xrInput.isReleased('right-trigger')) {
+                        isDragging = false;
+                    }
+
+                     if (isDragging && intersectedObject) {
+                        const deltaX = screenPosition.x - previousMousePosition.x;
+                        const deltaY = screenPosition.y - previousMousePosition.y;
+
+                        intersectedObject.position.x += deltaX * 0.01;
+                        intersectedObject.position.y -= deltaY * 0.01;
+
                         previousMousePosition = screenPosition;
                     }
                 }
-                else if (xrInput.isPressed('right-grip')) {
-                    showMenu();
-                }
-
-                if (xrInput.isReleased('right-trigger')) {
-                    isDragging = false;
-                }
-
-                 if (isDragging && intersectedObject) {
-                    const deltaX = screenPosition.x - previousMousePosition.x;
-                    const deltaY = screenPosition.y - previousMousePosition.y;
-
-                    intersectedObject.position.x += deltaX * 0.01;
-                    intersectedObject.position.y -= deltaY * 0.01;
-
-                    previousMousePosition = screenPosition;
-                }
+            }
+            catch(e){
+              console.error("Error in handleControllerInput", e);
             }
         }
 
@@ -290,11 +312,16 @@
         const vrButton = document.getElementById('vr-button');
         vrButton.addEventListener('click', async () => {
             if (!isVRMode) {
-                await setupXR();
-                if (xrSession) {
-                    isVRMode = true;
-                    animate();
-                }
+                try{
+                    await setupXR();
+                    if (xrSession) {
+                        isVRMode = true;
+                        animate();
+                    }
+                 }
+                 catch(e){
+                    console.error("Error in VR Button Click", e);
+                 }
             } else if (xrSession) {
                 xrSession.end();
                 isVRMode = false;
