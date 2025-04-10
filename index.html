@@ -3,247 +3,122 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>VR Building Game</title>
+  <title>VR Movement Test</title>
   <script src="https://cdn.jsdelivr.net/npm/three@0.139.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@webxr/xr-dom-input-processor@1.0.0/build/xr-dom-input-processor.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; }
+    body { margin: 0; overflow: hidden; background: white; }
     #vr-button {
-      position: absolute;
-      bottom: 20px;
-      left: 50%;
+      position: absolute; bottom: 20px; left: 50%;
       transform: translateX(-50%);
       padding: 10px 20px;
-      background-color: #4CAF50;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
+      background: #4CAF50; color: white;
+      border: none; border-radius: 5px;
       font-size: 16px;
-      z-index: 1;
-    }
-    #menu {
-      position: absolute;
-      top: 50px;
-      left: 50%;
-      transform: translateX(-50%);
-      background-color: rgba(0, 0, 0, 0.7);
-      color: white;
-      padding: 20px;
-      border-radius: 10px;
-      z-index: 2;
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      gap: 10px;
-    }
-    #menu button {
-      padding: 8px 16px;
-      background-color: #2196F3;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      font-size: 14px;
     }
   </style>
 </head>
 <body>
-  <div id="menu">
-    <button id="add-cube">Add Cube</button>
-    <button id="add-sphere">Add Sphere</button>
-    <button id="close-menu">Close Menu</button>
-  </div>
   <button id="vr-button">Enter VR</button>
-
   <script>
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
-
-    // Add lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
-    dirLight.position.set(1, 1, 1);
-    scene.add(dirLight);
-
     let xrSession = null;
-    let xrRefSpace = null;
-    let isVRMode = false;
-    let rightController;
-    let leftController;
-    let menuVisible = false;
-    let xrInput;
+    let referenceSpace = null;
+    let renderer, scene, camera;
+    let controllerLeft;
 
-    const cubes = [];
-    const spheres = [];
+    init();
 
-    const raycaster = new THREE.Raycaster();
-    let intersectedObject = null;
-    let isDragging = false;
-    let previousMousePosition = { x: 0, y: 0 };
+    function init() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xffffff);
 
-    function createCube() {
-      const geo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-      const mat = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
-      const cube = new THREE.Mesh(geo, mat);
-      cube.position.set(0, 0.5, -1);
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 100);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.body.appendChild(renderer.domElement);
+
+      const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
+      scene.add(light);
+
+      const floorGeometry = new THREE.PlaneGeometry(100, 100);
+      const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 }); // green grass
+      const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+      floor.rotation.x = -Math.PI / 2;
+      scene.add(floor);
+
+      // Cube for reference
+      const geometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+      const material = new THREE.MeshStandardMaterial({ color: 0x0000ff });
+      const cube = new THREE.Mesh(geometry, material);
+      cube.position.set(0, 1.6, -2);
       scene.add(cube);
-      cubes.push(cube);
-      return cube;
+
+      // Controller setup
+      controllerLeft = renderer.xr.getController(0);
+      scene.add(controllerLeft);
+
+      // Animation loop
+      renderer.setAnimationLoop(render);
     }
 
-    function createSphere() {
-      const geo = new THREE.SphereGeometry(0.1, 32, 32);
-      const mat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-      const sphere = new THREE.Mesh(geo, mat);
-      sphere.position.set(0, 0.5, -1);
-      scene.add(sphere);
-      spheres.push(sphere);
-      return sphere;
+    function render(timestamp, frame) {
+      if (xrSession && frame) {
+        const inputSources = xrSession.inputSources;
+        for (const source of inputSources) {
+          if (source.handedness === 'left' && source.gamepad && referenceSpace) {
+            const gp = source.gamepad;
+            const axes = gp.axes;
+
+            const moveSpeed = 0.05;
+
+            // Forward/back on axis[3], left/right on axis[2]
+            const forward = -axes[3] || 0;
+            const strafe = axes[2] || 0;
+
+            if (Math.abs(forward) > 0.01 || Math.abs(strafe) > 0.01) {
+              const viewerPose = frame.getViewerPose(referenceSpace);
+              if (viewerPose) {
+                const dir = new THREE.Vector3(0, 0, -1);
+                const headsetMatrix = new THREE.Matrix4().fromArray(viewerPose.views[0].transform.matrix);
+                dir.applyMatrix4(headsetMatrix).sub(headsetMatrix.getPosition()).normalize();
+
+                const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+
+                const moveVector = new THREE.Vector3();
+                moveVector.addScaledVector(dir, forward);
+                moveVector.addScaledVector(right, strafe);
+                moveVector.multiplyScalar(moveSpeed);
+
+                camera.position.add(moveVector);
+              }
+            }
+          }
+        }
+      }
+
+      renderer.render(scene, camera);
     }
 
-    function showMenu() {
-      menuVisible = true;
-      document.getElementById('menu').style.display = 'flex';
-    }
-
-    function hideMenu() {
-      menuVisible = false;
-      document.getElementById('menu').style.display = 'none';
-    }
-
-    document.getElementById('add-cube').addEventListener('click', () => {
-      createCube();
-      hideMenu();
-    });
-
-    document.getElementById('add-sphere').addEventListener('click', () => {
-      createSphere();
-      hideMenu();
-    });
-
-    document.getElementById('close-menu').addEventListener('click', () => {
-      hideMenu();
-    });
-
-    async function setupXR() {
-      if ('xr' in navigator) {
+    document.getElementById('vr-button').addEventListener('click', async () => {
+      if (navigator.xr) {
         try {
           xrSession = await navigator.xr.requestSession('immersive-vr', {
-            requiredFeatures: ['local'],
-            optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'dom-overlay'],
-            domOverlay: { root: document.body }
+            optionalFeatures: ['local-floor']
           });
 
-          xrSession.addEventListener('end', onSessionEnd);
+          xrSession.addEventListener('end', () => {
+            xrSession = null;
+          });
 
-          xrInput = new XRDOMInputProcessor(xrSession, document);
+          renderer.xr.setSession(xrSession);
+          referenceSpace = await xrSession.requestReferenceSpace('local-floor');
 
-          xrRefSpace = await xrSession.requestReferenceSpace('local');
-
-          renderer.xr.enabled = true;
-          await renderer.xr.setSession(xrSession);
-
-          // Add controllers
-          leftController = renderer.xr.getControllerGrip(0);
-          rightController = renderer.xr.getControllerGrip(1);
-          scene.add(leftController);
-          scene.add(rightController);
-
-          const lineGeo = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(0, 0, 0),
-            new THREE.Vector3(0, 0, -5)
-          ]);
-          const lineMat = new THREE.LineBasicMaterial({ color: 0x00ffff });
-          leftController.add(new THREE.Line(lineGeo, lineMat));
-          rightController.add(new THREE.Line(lineGeo, lineMat));
-
-        } catch (error) {
-          console.error("WebXR Error:", error);
-          alert("VR not supported or blocked.");
+        } catch (e) {
+          alert("Failed to start XR: " + e.message);
         }
       } else {
-        alert("WebXR not supported in this browser.");
-      }
-    }
-
-    function onSessionEnd() {
-      isVRMode = false;
-      xrSession = null;
-      renderer.xr.enabled = false;
-      animate(); // fallback to normal loop
-    }
-
-    function handleControllerInput() {
-      if (!rightController || !xrInput) return;
-
-      const pos = rightController.getWorldPosition(new THREE.Vector3());
-      const screen = {
-        x: (pos.x + 1) * window.innerWidth / 2,
-        y: (-pos.y + 1) * window.innerHeight / 2
-      };
-
-      raycaster.setFromCamera({
-        x: (screen.x / window.innerWidth) * 2 - 1,
-        y: -(screen.y / window.innerHeight) * 2 + 1
-      }, camera);
-
-      const intersects = raycaster.intersectObjects(scene.children);
-
-      if (intersects.length > 0) {
-        intersectedObject = intersects[0].object;
-        if (!isDragging) {
-          intersectedObject.material.color.set(0xffffff);
-        }
-      } else if (intersectedObject) {
-        intersectedObject.material.color.set(0x00ff00);
-        intersectedObject = null;
-      }
-
-      if (xrInput.isPressed('right-trigger')) {
-        if (intersectedObject) {
-          isDragging = true;
-          previousMousePosition = screen;
-        }
-      } else if (xrInput.isReleased('right-trigger')) {
-        isDragging = false;
-      }
-
-      if (xrInput.isPressed('right-grip')) {
-        showMenu();
-      }
-
-      if (isDragging && intersectedObject) {
-        const deltaX = screen.x - previousMousePosition.x;
-        const deltaY = screen.y - previousMousePosition.y;
-
-        intersectedObject.position.x += deltaX * 0.01;
-        intersectedObject.position.y -= deltaY * 0.01;
-
-        previousMousePosition = screen;
-      }
-    }
-
-    function animate() {
-      renderer.setAnimationLoop(() => {
-        renderer.render(scene, camera);
-        handleControllerInput();
-      });
-    }
-
-    const vrButton = document.getElementById('vr-button');
-    vrButton.addEventListener('click', async () => {
-      if (!isVRMode) {
-        await setupXR();
-        if (xrSession) {
-          isVRMode = true;
-          animate();
-        }
-      } else if (xrSession) {
-        xrSession.end();
+        alert("WebXR not supported or blocked.");
       }
     });
 
@@ -252,9 +127,6 @@
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
-
-    // Start non-VR animation loop
-    animate();
   </script>
 </body>
 </html>
