@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Simple Quest 3 Model Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      background-color: #222;
+    }
+    button {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 15px 30px;
+      font-size: 20px;
+      background-color: #0066ff;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      z-index: 999;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      width: 100%;
+      text-align: center;
+      color: white;
+      background-color: rgba(0, 0, 0, 0.7);
+      padding: 8px;
+      font-size: 18px;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">Simple Quest 3 Model Viewer</div>
+  <button id="enter-vr">Enter VR</button>
+  
+  <script type="module">
+    import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.js';
+    import { GLTFLoader } from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/examples/jsm/loaders/GLTFLoader.js';
+    import { OrbitControls } from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/examples/jsm/controls/OrbitControls.js';
+    import { XRControllerModelFactory } from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/examples/jsm/webxr/XRControllerModelFactory.js';
+
+    // Scene setup
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x222222);
+    
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 1.6, 3);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    // Controls for desktop viewing
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1, 0);
+    controls.update();
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(5, 10, 7);
+    scene.add(directionalLight);
+
+    // Reference grid
+    const gridHelper = new THREE.GridHelper(10, 10);
+    gridHelper.position.y = 0;
+    scene.add(gridHelper);
+
+    // Load model - REPLACE THE URL BELOW WITH YOUR MODEL URL
+    const modelUrl = 'https://cdn.aframe.io/examples/ar/models/reticool/reticool.gltf';
+    // If you have a local model, use a relative path like './models/your-model.glb'
+    
+    let model;
+    const loader = new GLTFLoader();
+    
+    loader.load(
+      modelUrl,
+      function (gltf) {
+        model = gltf.scene;
+        
+        // Scale and position the model
+        model.scale.set(0.5, 0.5, 0.5);
+        model.position.set(0, 1, -1);
+        
+        scene.add(model);
+        
+        // Optional: Auto-rotate the model
+        function animate() {
+          if (model) {
+            model.rotation.y += 0.01;
+          }
+        }
+        
+        renderer.setAnimationLoop(() => {
+          animate();
+          renderer.render(scene, camera);
+        });
+      },
+      function (xhr) {
+        console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+      },
+      function (error) {
+        console.error('Error loading model:', error);
+      }
+    );
+
+    // VR Button functionality
+    document.getElementById('enter-vr').addEventListener('click', async function() {
+      if (!navigator.xr) {
+        alert("WebXR not available in your browser");
+        return;
+      }
+      
+      try {
+        // Try AR first (for passthrough)
+        const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        
+        if (isARSupported) {
+          const session = await navigator.xr.requestSession('immersive-ar', {
+            optionalFeatures: ['local-floor', 'bounded-floor']
+          });
+          
+          if ('initializePassthrough' in navigator.xr) {
+            await navigator.xr.initializePassthrough();
+          }
+          
+          renderer.xr.setSession(session);
+        } else {
+          // Fallback to VR mode
+          const session = await navigator.xr.requestSession('immersive-vr', {
+            optionalFeatures: ['local-floor', 'bounded-floor']
+          });
+          
+          renderer.xr.setSession(session);
+        }
+      } catch (error) {
+        console.error('Error entering VR:', error);
+        alert("Error starting VR session");
+      }
+    });
+
+    // Basic controller setup
+    const controllerModelFactory = new XRControllerModelFactory();
+    
+    const controller1 = renderer.xr.getController(0);
+    scene.add(controller1);
+    
+    const controllerGrip1 = renderer.xr.getControllerGrip(0);
+    controllerGrip1.add(controllerModelFactory.createControllerModel(controllerGrip1));
+    scene.add(controllerGrip1);
+
+    // Window resize handling
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
