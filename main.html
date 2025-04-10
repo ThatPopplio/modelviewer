@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VR Cube Example (WebXR)</title>
+    <title>VR Building Game</title>
     <script src="https://cdn.jsdelivr.net/npm/three@0.139.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@webxr/xr-dom-input-processor@1.0.0/build/xr-dom-input-processor.js"></script>
     <style>
         body { margin: 0; overflow: hidden; }
         #vr-button {
@@ -19,28 +20,58 @@
             border-radius: 5px;
             cursor: pointer;
             font-size: 16px;
-            z-index: 1; /* Ensure button is above the canvas */
+            z-index: 1;
         }
         #vr-button:hover {
             background-color: #367c39;
         }
-        #instructions {
+        #menu {
             position: absolute;
-            top: 10px;
+            top: 50px;
             left: 50%;
             transform: translateX(-50%);
-            color: white;
-            padding: 10px;
             background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 2;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        #menu button {
+            padding: 8px 16px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
             border-radius: 5px;
-            z-index: 1;
+            cursor: pointer;
             font-size: 14px;
         }
+        #menu button:hover {
+            background-color: #0b7dda;
+        }
+        .draggable {
+             position: absolute;
+             top: 100px;
+             left: 50%;
+             width: 200px;
+             height: 100px;
+             background-color: rgba(255, 255, 255, 0.8);
+             border: 1px solid #ccc;
+             padding: 10px;
+             cursor: move;
+             z-index: 10;
+        }
+
     </style>
 </head>
 <body>
-    <div id="instructions">
-        Press the VR button below while wearing your Meta Quest 3.
+    <div id="menu">
+        <button id="add-cube">Add Cube</button>
+        <button id="add-sphere">Add Sphere</button>
+        <button id="close-menu">Close Menu</button>
     </div>
     <button id="vr-button">Enter VR</button>
     <script>
@@ -51,26 +82,83 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // 2. Create a cube
-        const geometry = new THREE.BoxGeometry(1, 1, 1);
-        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // Green color
-        const cube = new THREE.Mesh(geometry, material);
-        scene.add(cube);
-
-        // 3. Position the camera
-        camera.position.z = 3;
-
-        // 4. Set up WebXR
+        // 2. Set up WebXR
         let xrSession = null;
         let xrRefSpace = null;
         let isVRMode = false;
+        let rightController;
+        let leftController;
+        let menuVisible = false;
+        let xrInput;
+        let cubes = [];  // Array to store added cubes
+        let spheres = [];
 
-        async function setupXR() {
+        //Raycaster
+        const raycaster = new THREE.Raycaster();
+        let intersectedObject = null;
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+
+        function createCube() {
+            const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+            const material = new THREE.MeshStandardMaterial({ color: 0x00ff00, roughness: 0.7, metalness: 0.0 });
+            const cube = new THREE.Mesh(geometry, material);
+            cube.position.set(0, 0.5, -1);
+            scene.add(cube);
+            cubes.push(cube);
+            return cube;
+        }
+
+        function createSphere() {
+            const geometry = new THREE.SphereGeometry(0.1, 32, 32);
+            const material = new THREE.MeshStandardMaterial({ color: 0xff0000, roughness: 0.7, metalness: 0.0 });
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.position.set(0, 0.5, -1);
+            scene.add(sphere);
+            spheres.push(sphere);
+            return sphere;
+        }
+
+        function showMenu() {
+            menuVisible = true;
+            document.getElementById('menu').style.display = 'flex';
+        }
+
+        function hideMenu() {
+            menuVisible = false;
+            document.getElementById('menu').style.display = 'none';
+        }
+
+        document.getElementById('add-cube').addEventListener('click', () => {
+            const cube = createCube();
+            scene.add(cube);
+            hideMenu();
+        });
+
+        document.getElementById('add-sphere').addEventListener('click', () => {
+            const sphere = createSphere();
+            scene.add(sphere);
+            hideMenu();
+        });
+
+        document.getElementById('close-menu').addEventListener('click', () => {
+            hideMenu();
+        });
+
+       async function setupXR() {
             if ('xr' in navigator) {
                 try {
                     // Request an XR session.  'immersive-vr' is for headsets.
-                    xrSession = await navigator.xr.requestSession('immersive-vr');
+                    xrSession = await navigator.xr.requestSession('immersive-vr', {
+                        requiredFeatures: ['tracked-controllers', 'hand-tracking', 'dom-overlay'], // Add 'tracked-controllers'
+                        optionalFeatures: ['local-floor']
+                    });
+
                     xrSession.addEventListener('end', onSessionEnd);
+
+                    // Set the DOM overlay
+                    xrInput = new XRDOMInputProcessor(xrSession, document);
+
 
                     // Create a reference space.  'local' is good for simple scenes.
                     xrRefSpace = await xrSession.requestReferenceSpace('local');
@@ -87,6 +175,25 @@
                         animate();
                     }
 
+                    //Create controllers
+                    leftController = renderer.xr.getControllerGrip(0);
+                    rightController = renderer.xr.getControllerGrip(1);
+                    scene.add(leftController);
+                    scene.add(rightController);
+
+                    const geometry = new THREE.BufferGeometry().setFromPoints([
+                        [0, 0, 0],
+                        [0, 0, -5],
+                    ]);
+                    const material = new THREE.LineBasicMaterial({
+                        color: 0x00ffff,
+                    });
+                    const leftRay = new THREE.Line(geometry, material);
+                    const rightRay = new THREE.Line(geometry, material);
+                    leftController.add(leftRay);
+                    rightController.add(rightRay);
+
+
                 } catch (error) {
                     console.error("Error setting up WebXR:", error);
                     alert("VR Not supported: " + error.message);
@@ -98,20 +205,16 @@
             }
         }
 
+
+
         // 5. Animate the cube and handle VR presentation
         function animate(time) {
             if (!isVRMode) {
                 requestAnimationFrame(animate);
-
-                cube.rotation.x += 0.01;
-                cube.rotation.y += 0.01;
                 renderer.render(scene, camera);
             }
             else if (xrSession) {
-                 xrSession.requestAnimationFrame(animate);
-
-                cube.rotation.x += 0.01;
-                cube.rotation.y += 0.01;
+                xrSession.requestAnimationFrame(animate);
 
                 if (xrRefSpace) {
                     const pose = xrSession.getViewerPose(xrRefSpace);
@@ -124,6 +227,61 @@
                             renderer.render(scene, camera);
                         }
                     }
+                }
+                // Handle input from the controllers.
+                handleControllerInput();
+            }
+        }
+
+        function handleControllerInput() {
+            if (!rightController || !leftController) return;
+
+            const rightPose = rightController.getWorldPosition(new THREE.Vector3());
+            const leftPose = leftController.getWorldPosition(new THREE.Vector3());
+
+             // Convert controller position to screen coordinates.
+            const screenPosition = {
+                x: (rightPose.x + 1) * (window.innerWidth / 2),
+                y: (-rightPose.y + 1) * (window.innerHeight / 2),
+            };
+
+            raycaster.setFromCamera(screenPosition, camera);
+            const intersects = raycaster.intersectObjects(scene.children);
+
+            if (intersects.length > 0) {
+                intersectedObject = intersects[0].object;
+                if(!isDragging){
+                     intersectedObject.material.color.set(0xffffff);
+                }
+
+            } else if (intersectedObject) {
+                intersectedObject.material.color.set(0x00ff00);
+                intersectedObject = null;
+            }
+
+            if (xrSession && xrInput) {
+                if (xrInput.isPressed('right-trigger')) {
+                    if (intersectedObject) {
+                        isDragging = true;
+                        previousMousePosition = screenPosition;
+                    }
+                }
+                else if (xrInput.isPressed('right-grip')) {
+                    showMenu();
+                }
+
+                if (xrInput.isReleased('right-trigger')) {
+                    isDragging = false;
+                }
+
+                 if (isDragging && intersectedObject) {
+                    const deltaX = screenPosition.x - previousMousePosition.x;
+                    const deltaY = screenPosition.y - previousMousePosition.y;
+
+                    intersectedObject.position.x += deltaX * 0.01;
+                    intersectedObject.position.y -= deltaY * 0.01;
+
+                    previousMousePosition = screenPosition;
                 }
             }
         }
