@@ -1,132 +1,357 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>VR Movement Test</title>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.139.0/build/three.min.js"></script>
-  <style>
-    body { margin: 0; overflow: hidden; background: white; }
-    #vr-button {
-      position: absolute; bottom: 20px; left: 50%;
-      transform: translateX(-50%);
-      padding: 10px 20px;
-      background: #4CAF50; color: white;
-      border: none; border-radius: 5px;
-      font-size: 16px;
-    }
-  </style>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+    <title>WebXR Movement, Gravity & Jump</title>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+    <script type="module">
+        // Simple VRButton replacement as module import isn't standard in snippets
+        // In a real project, you'd use import { VRButton } from 'three/addons/webxr/VRButton.js';
+        var VRButton = {
+            createButton: function ( renderer, options ) {
+                if ( options && options.referenceSpaceType ) {
+                    renderer.xr.setReferenceSpaceType( options.referenceSpaceType );
+                }
+                function showEnterVR( /*device*/ ) {
+                    let button = document.createElement( 'button' );
+                    button.id = 'VRButton';
+                    button.style.display = '';
+                    button.style.position = 'absolute';
+                    button.textContent = 'ENTER VR';
+                    button.style.left = 'calc(50% - 50px)';
+                    button.style.bottom = '20px';
+                    button.style.width = '100px';
+                    button.style.border = 'none';
+                    button.style.padding = '12px';
+                    button.style.background = '#007bff';
+                    button.style.color = 'white';
+                    button.style.borderRadius = '4px';
+                    button.style.cursor = 'pointer';
+
+                    button.onmouseenter = function () { button.style.opacity = '0.9'; };
+                    button.onmouseleave = function () { button.style.opacity = '1'; };
+
+                    button.onclick = function () {
+                        if ( currentSession === null ) {
+                            // Request immersive-vr session
+                            var sessionInit = { optionalFeatures: [ 'local-floor', 'bounded-floor', 'hand-tracking', 'layers' ] };
+                            navigator.xr.requestSession( 'immersive-vr', sessionInit ).then( onSessionStarted );
+                        } else {
+                            currentSession.end();
+                        }
+                    };
+                    document.body.appendChild( button );
+                    return button;
+                }
+
+                function showEnterXRNotSupported() {
+                    let button = document.createElement( 'button' );
+                    // Style similarly to showEnterVR but indicate lack of support
+                    button.textContent = 'VR NOT SUPPORTED';
+                    // ... add styling ...
+                    document.body.appendChild( button );
+                }
+
+                function onSessionStarted( session ) {
+                    session.addEventListener( 'end', onSessionEnded );
+                    renderer.xr.setSession( session );
+                    let button = document.getElementById('VRButton');
+                    if (button) button.textContent = 'EXIT VR';
+                    currentSession = session;
+                    // Start the game loop or relevant XR logic here
+                    startXRLogic(session);
+                }
+
+                function onSessionEnded( /*event*/ ) {
+                    currentSession.removeEventListener( 'end', onSessionEnded );
+                    let button = document.getElementById('VRButton');
+                    if (button) button.textContent = 'ENTER VR';
+                    currentSession = null;
+                    // Stop XR specific logic if needed
+                    stopXRLogic();
+                }
+
+                let currentSession = null;
+
+                if ( 'xr' in navigator ) {
+                    navigator.xr.isSessionSupported( 'immersive-vr' ).then( function ( supported ) {
+                        supported ? showEnterVR() : showEnterXRNotSupported();
+                    } );
+                } else {
+                    showEnterXRNotSupported();
+                }
+            }
+        };
+        window.VRButton = VRButton; // Make it accessible globally for the script below
+    </script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; font-family: sans-serif; }
+        canvas { display: block; }
+        #message-box {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border-radius: 5px;
+            display: none; /* Hidden by default */
+            z-index: 10;
+        }
+    </style>
 </head>
 <body>
-  <button id="vr-button">Enter VR</button>
-  <script>
-    let xrSession = null;
-    let referenceSpace = null;
-    let renderer, scene, camera;
-    let controllerLeft;
+    <div id="message-box"></div>
+    <script type="module">
+        let scene, camera, renderer;
+        let xrSession = null;
+        let baseReferenceSpace = null;
+        let currentReferenceSpace = null; // This will be the offset space
+        let clock; // For delta time calculation
 
-    init();
+        // Player physics and state
+        const playerOffset = new THREE.Vector3(0, 0, -2); // Initial position offset relative to physical floor
+        const playerVelocity = new THREE.Vector3();
+        const playerDirection = new THREE.Vector3(); // For movement calculation
+        let isGrounded = false;
+        const gravity = -9.8; // m/s^2
+        const jumpVelocity = 5; // m/s upwards
+        const moveSpeed = 3; // m/s
 
-    function init() {
-      scene = new THREE.Scene();
-      scene.background = new THREE.Color(0xffffff);
+        // Controllers
+        let controllerLeft;
+        // let controllerRight; // If needed for other actions
 
-      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 100);
+        init();
 
-      renderer = new THREE.WebGLRenderer({ antialias: true });
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.xr.enabled = true;
-      document.body.appendChild(renderer.domElement);
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb); // Sky blue background
 
-      const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
-      scene.add(light);
+            // Use a perspective camera as a fallback and for non-VR view
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 1.6, 0); // Typical eye height if not in VR
 
-      const floorGeometry = new THREE.PlaneGeometry(100, 100);
-      const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 }); // green grass
-      const floor = new THREE.Mesh(floorGeometry, floorMaterial);
-      floor.rotation.x = -Math.PI / 2;
-      scene.add(floor);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.xr.enabled = true; // Enable WebXR
+            document.body.appendChild(renderer.domElement);
 
-      // Cube for reference
-      const geometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
-      const material = new THREE.MeshStandardMaterial({ color: 0x0000ff });
-      const cube = new THREE.Mesh(geometry, material);
-      cube.position.set(0, 1.6, -2);
-      scene.add(cube);
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 10, 7.5);
+            scene.add(directionalLight);
 
-      // Controller setup
-      controllerLeft = renderer.xr.getController(0);
-      scene.add(controllerLeft);
+            // Floor
+            const floorGeometry = new THREE.PlaneGeometry(100, 100);
+            const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x228b22, side: THREE.DoubleSide }); // Forest green
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            floor.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+            // Floor is at y=0 in the baseReferenceSpace (physical floor)
+            scene.add(floor);
 
-      // Animation loop
-      renderer.setAnimationLoop(render);
-    }
+            // Reference Cube
+            const cubeGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+            const cubeMaterial = new THREE.MeshStandardMaterial({ color: 0xffa500 }); // Orange
+            const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+            cube.position.set(0, 0.25, -3); // Place it on the floor relative to scene origin
+            scene.add(cube);
 
-    function render(timestamp, frame) {
-      if (xrSession && frame) {
-        const inputSources = xrSession.inputSources;
-        for (const source of inputSources) {
-          if (source.handedness === 'left' && source.gamepad && referenceSpace) {
-            const gp = source.gamepad;
-            const axes = gp.axes;
+            // Add VR Button using the utility
+            VRButton.createButton( renderer, { referenceSpaceType: 'local-floor' } );
 
-            const moveSpeed = 0.05;
+            // Clock for delta time
+            clock = new THREE.Clock();
 
-            // Forward/back on axis[3], left/right on axis[2]
-            const forward = -axes[3] || 0;
-            const strafe = axes[2] || 0;
+            // Controller Setup (get them when session starts)
 
-            if (Math.abs(forward) > 0.01 || Math.abs(strafe) > 0.01) {
-              const viewerPose = frame.getViewerPose(referenceSpace);
-              if (viewerPose) {
-                const dir = new THREE.Vector3(0, 0, -1);
-                const headsetMatrix = new THREE.Matrix4().fromArray(viewerPose.views[0].transform.matrix);
-                dir.applyMatrix4(headsetMatrix).sub(headsetMatrix.getPosition()).normalize();
+            // Start the animation loop
+            renderer.setAnimationLoop(render);
 
-                const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize();
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
+        }
 
-                const moveVector = new THREE.Vector3();
-                moveVector.addScaledVector(dir, forward);
-                moveVector.addScaledVector(right, strafe);
-                moveVector.multiplyScalar(moveSpeed);
+        // Called by VRButton when session starts
+        window.startXRLogic = async function(session) {
+            xrSession = session;
+            try {
+                baseReferenceSpace = await xrSession.requestReferenceSpace('local-floor');
 
-                camera.position.add(moveVector);
-              }
+                // Initialize the offset reference space
+                updateReferenceSpace();
+
+                // Setup controllers
+                controllerLeft = renderer.xr.getController(0); // Left hand is index 0
+                // controllerRight = renderer.xr.getController(1); // Right hand is index 1
+
+                // You might add visual models for controllers if desired
+                // scene.add(controllerLeft);
+                // scene.add(controllerRight);
+
+            } catch (error) {
+                showMessage("Error getting reference space: " + error.message);
+                if (xrSession) xrSession.end();
             }
-          }
         }
-      }
 
-      renderer.render(scene, camera);
-    }
-
-    document.getElementById('vr-button').addEventListener('click', async () => {
-      if (navigator.xr) {
-        try {
-          xrSession = await navigator.xr.requestSession('immersive-vr', {
-            optionalFeatures: ['local-floor']
-          });
-
-          xrSession.addEventListener('end', () => {
+        // Called by VRButton when session ends
+        window.stopXRLogic = function() {
             xrSession = null;
-          });
-
-          renderer.xr.setSession(xrSession);
-          referenceSpace = await xrSession.requestReferenceSpace('local-floor');
-
-        } catch (e) {
-          alert("Failed to start XR: " + e.message);
+            baseReferenceSpace = null;
+            currentReferenceSpace = null;
+            // Reset player state if needed
+            playerOffset.set(0, 0, -2);
+            playerVelocity.set(0, 0, 0);
+            isGrounded = false;
+            // Remove controllers from scene if they were added
+            // if (controllerLeft) scene.remove(controllerLeft);
+            // if (controllerRight) scene.remove(controllerRight);
+            controllerLeft = null;
+            // controllerRight = null;
         }
-      } else {
-        alert("WebXR not supported or blocked.");
-      }
-    });
 
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-  </script>
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function showMessage(msg) {
+            const msgBox = document.getElementById('message-box');
+            if (msgBox) {
+                msgBox.textContent = msg;
+                msgBox.style.display = 'block';
+                setTimeout(() => { msgBox.style.display = 'none'; }, 3000); // Hide after 3 seconds
+            } else {
+                console.log("Message Box:", msg); // Fallback
+            }
+        }
+
+        function handleControllerInput(deltaTime, frame, referenceSpace) {
+            if (!controllerLeft || !referenceSpace) return; // Ensure controller and space are ready
+
+            let moveDirectionIntent = new THREE.Vector3(0, 0, 0);
+            let jumpIntent = false;
+
+            // --- Check Left Controller ---
+            const inputSourceLeft = xrSession.inputSources.find(source => source.handedness === 'left');
+            if (inputSourceLeft && inputSourceLeft.gamepad) {
+                const gamepad = inputSourceLeft.gamepad;
+
+                // Joystick Axes (indices 2 and 3 for thumbstick)
+                const joystickX = gamepad.axes[2] || 0;
+                const joystickY = gamepad.axes[3] || 0;
+
+                // Deadzone to prevent drift
+                const deadzone = 0.1;
+                if (Math.abs(joystickX) > deadzone) {
+                    moveDirectionIntent.x = joystickX;
+                }
+                if (Math.abs(joystickY) > deadzone) {
+                    moveDirectionIntent.z = joystickY; // Forward/Backward
+                }
+
+                // Grip Button (Squeeze - index 1) for Jump
+                if (gamepad.buttons[1] && gamepad.buttons[1].pressed && isGrounded) {
+                    jumpIntent = true;
+                }
+            }
+
+            // --- Apply Movement Intent ---
+            if (moveDirectionIntent.lengthSq() > 0.01) { // If there's significant joystick input
+                 const viewerPose = frame.getViewerPose(referenceSpace);
+                 if (viewerPose) {
+                    // Get headset orientation (ignore position, we only need direction)
+                    const headsetQuaternion = new THREE.Quaternion().fromArray(viewerPose.transform.orientation);
+
+                    // Calculate forward and right directions based on headset orientation (on the XZ plane)
+                    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(headsetQuaternion);
+                    forward.y = 0; // Project onto ground plane
+                    forward.normalize();
+
+                    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize(); // Right direction
+
+                    // Combine joystick input with headset orientation
+                    playerDirection.set(0, 0, 0); // Reset playerDirection
+                    playerDirection.addScaledVector(right, moveDirectionIntent.x); // Apply strafe
+                    playerDirection.addScaledVector(forward, moveDirectionIntent.z); // Apply forward/backward
+                    playerDirection.normalize(); // Ensure consistent speed
+
+                    // Update player offset based on direction and speed
+                    playerOffset.addScaledVector(playerDirection, moveSpeed * deltaTime);
+                 }
+            }
+
+            // --- Apply Jump Intent ---
+            if (jumpIntent) {
+                playerVelocity.y = jumpVelocity;
+                isGrounded = false; // No longer grounded after jumping
+            }
+        }
+
+        function updatePhysics(deltaTime) {
+            // Apply gravity if not grounded
+            if (!isGrounded) {
+                playerVelocity.y += gravity * deltaTime;
+            }
+
+            // Update vertical position based on velocity
+            playerOffset.y += playerVelocity.y * deltaTime;
+
+            // Check for floor collision (player's base hits y=0)
+            if (playerOffset.y < 0) {
+                playerOffset.y = 0; // Clamp to floor
+                playerVelocity.y = 0; // Stop vertical movement
+                isGrounded = true;
+            } else {
+                isGrounded = false; // In the air
+            }
+        }
+
+        function updateReferenceSpace() {
+            if (!baseReferenceSpace) return;
+            // Create a transform based on the current player offset
+            // Position is the offset, orientation is identity (no rotation applied to the space itself)
+            const transform = new XRRigidTransform(playerOffset, {x: 0, y: 0, z: 0, w: 1});
+            // Get the new offset reference space for this frame
+            currentReferenceSpace = baseReferenceSpace.getOffsetReferenceSpace(transform);
+        }
+
+        function render(timestamp, frame) {
+            const deltaTime = clock.getDelta(); // Time since last frame in seconds
+
+            if (xrSession && frame && baseReferenceSpace) {
+                // 1. Update the reference space based on physics and input *before* getting pose
+                updatePhysics(deltaTime);
+                handleControllerInput(deltaTime, frame, currentReferenceSpace); // Pass current space for orientation
+                updateReferenceSpace(); // Update space based on new offset
+
+                // 2. Get viewer pose relative to the *updated* reference space
+                const viewerPose = frame.getViewerPose(currentReferenceSpace);
+
+                if (viewerPose) {
+                    // The renderer automatically uses the session's reference space
+                    // and the pose to position the camera internally.
+                    // We don't need to manually set camera position/rotation here.
+                } else {
+                    // Handle case where pose is not available (e.g., tracking lost)
+                    // Maybe show a message or pause updates
+                }
+
+            } else {
+                // Non-VR rendering or session not started
+                // You could add keyboard/mouse controls here for fallback
+            }
+
+            // Render the scene
+            renderer.render(scene, camera);
+        }
+
+    </script>
 </body>
 </html>
